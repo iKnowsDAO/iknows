@@ -1,6 +1,7 @@
 
 module iknows::user {
 
+    use std::vector;
     use sui::object::{Self, ID, UID};
     // use std::option::{Self, Option};
     use std::string::{Self, String};
@@ -9,6 +10,7 @@ module iknows::user {
     // use sui::sui::SUI;
     use sui::transfer;
     use sui::event::emit;
+    use sui::object_bag::{Self as ob, ObjectBag};
 
 
     const Gender_Male: vector<u8> = b"male";
@@ -32,6 +34,12 @@ module iknows::user {
 
     struct UserRegistry has key {
         id: UID,
+        bag: ObjectBag,
+    }
+
+    struct UserRegistered has key, store {
+        id: UID,
+        user_addr: address,
     }
 
     struct UserManagerCap has key, store {
@@ -56,10 +64,10 @@ module iknows::user {
         let id = object::new(ctx);
         
         emit(UserRegistryCreatedEvent { registry_id: object::uid_to_inner(&id)});
-        
-        
+              
         transfer::share_object(UserRegistry {
             id,
+            bag: ob::new(ctx),
         });
     }
 
@@ -97,6 +105,7 @@ module iknows::user {
     }
 
     public entry fun register(
+        registry: &mut UserRegistry,
         email: String,
         name: String,
         avatar: vector<u8>,
@@ -111,28 +120,30 @@ module iknows::user {
         let sender = tx_context::sender(ctx);
         let u = create_user(email, name, avatar, birthday, gender, biography, interests, location, memo, ctx);
 
+        let ui = UserRegistered {
+            id: object::new(ctx),
+            user_addr: sender,
+        };
+
+        ob::add(&mut registry.bag, sender, ui);
+
         transfer::transfer(u, sender);
     }
 
-    /// entry fun
-    // public entry fun create_user_without_avatar_url(
-    //     nickname: vector<u8>, 
-    //     birthday: vector<u8>, 
-    //     avatar: vector<u8>, 
-    //     language: vector<u8>, 
-    //     gender: vector<u8>,
-    //     city: vector<u8>, 
-    //     country: vector<u8>, 
-    //     ilike: vector<u8>,
-    //     bio: vector<u8>, 
-    //     ctx: &mut TxContext
-    // ) {
-    //     create_user(nickname, birthday, avatar, option::none(), gender, language, city, country, ilike, bio, ctx);
-    // }
+    public entry fun register_with_name(registry: &mut UserRegistry, name: String, ctx: &mut TxContext) {
+        register(registry, empty_string(), name, b"", empty_string(), empty_string(), empty_string(), vector::empty(), empty_string(), empty_string(), ctx);
+    }
 
-    public entry fun update_user_name(user: &mut UserProfile, new_name: vector<u8>) {
-        let name = string::utf8(new_name);
-        user.name = name
+    public entry fun update_user_name(user: &mut UserProfile, registry: & UserRegistry, new_name: vector<u8>, ctx: &mut TxContext) {
+        let sender = tx_context::sender(ctx);
+
+        if (ob::contains(&registry.bag, sender)) {
+            let name = string::utf8(new_name);
+            user.name = name
+        } else {
+            abort 0
+        }
+        
     }
 
     public entry fun update_user_avatar(user: &mut UserProfile, new_avatar: vector<u8>) {
@@ -192,5 +203,15 @@ module iknows::user {
         } else {
             unknown
         }
+    }
+
+    public fun empty_string(): String {
+        string::utf8(b"")
+    }
+
+    #[test_only] 
+    public fun init_test(ctx: &mut TxContext) {
+        init_cap(ctx);
+        init_registry(ctx);
     }
 }
