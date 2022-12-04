@@ -4,7 +4,7 @@ module iknows::user {
     use std::vector;
     use sui::object::{Self, ID, UID};
     // use std::option::{Self, Option};
-    use std::string::{Self, String};
+    use std::string::{Self, String, utf8};
     use sui::tx_context::{Self, TxContext};
     // use sui::coin::Coin;
     // use sui::sui::SUI;
@@ -17,6 +17,7 @@ module iknows::user {
     const Gender_Female: vector<u8> = b"female";
     const Gender_Unknown: vector<u8> = b"secrecy";
 
+    // Resources
     struct UserProfile has key {
         id: UID,
         sui_wallet: address,
@@ -50,6 +51,39 @@ module iknows::user {
     struct UserRegistryCreatedEvent has copy, drop {
         registry_id: ID,
     }
+
+    struct UserTransferredEvent has copy, drop {
+        user_id: ID,
+        from: address,
+        to: address,
+    }
+
+    struct UserCreatedEvent has copy, drop {
+        user_id: ID,
+        sui_wallet: address,
+        email: String,
+        name: String,
+        avatar: vector<u8>,
+        birthday: String,
+        gender: String,
+        biography: String,
+        interests: vector<String>,
+        location: String,
+        memo: String,
+        created_at: u64,
+
+    }
+
+    struct UserUpdatedEvent<FieldType> has copy, drop {
+        user_id: ID,
+        field_name: String,
+        field_value: FieldType 
+    }
+
+    // Errors 
+    const EALREADY_EXISTS: u64 = 0;
+
+    const ENOT_PERMISSION: u64 = 1;
 
     fun init(ctx: &mut TxContext) {
         init_cap(ctx);
@@ -88,6 +122,21 @@ module iknows::user {
         let gender = format_gender(&gender);
         let created_at = tx_context::epoch(ctx);
 
+        emit(UserCreatedEvent { 
+            user_id: object::uid_to_inner(&id),
+            sui_wallet: sender,
+            email,
+            name,
+            avatar,
+            birthday,
+            gender,
+            biography,
+            interests,
+            location,
+            memo,
+            created_at,          
+        });
+
         UserProfile {
             id,
             sui_wallet: sender,
@@ -102,6 +151,8 @@ module iknows::user {
             memo,
             created_at,
         }
+
+        
     }
 
     public entry fun register(
@@ -125,6 +176,9 @@ module iknows::user {
             user_addr: sender,
         };
 
+        
+
+        assert!(ob::contains(&registry.bag, sender), EALREADY_EXISTS);
         ob::add(&mut registry.bag, sender, ui);
 
         transfer::transfer(u, sender);
@@ -146,22 +200,58 @@ module iknows::user {
         
     }
 
+    public entry fun update_user_email(user: &mut UserProfile, new_email: String) {
+        user.email = new_email;
+
+        emit(create_user_updated_event(object::id(user), utf8(b"email"), new_email));
+    }
     public entry fun update_user_avatar(user: &mut UserProfile, new_avatar: vector<u8>) {
-        user.avatar = new_avatar
+        user.avatar = new_avatar;
+
+        emit(create_user_updated_event(object::id(user), utf8(b"avatar"), new_avatar));
     }
 
     public entry fun update_user_birthday(user: &mut UserProfile, new_birthday: vector<u8>) {
         let birthday = string::utf8(new_birthday);
         user.birthday = birthday;
+
+        emit(create_user_updated_event(object::id(user), utf8(b"birthday"), new_birthday));
     }
 
-    public entry fun update_user_biography(user: &mut UserProfile, new_bio: vector<u8>) {
-        let bio = string::utf8(new_bio);
-        user.biography = bio;
+    public entry fun update_user_biography(user: &mut UserProfile, new_bio: String) {
+        user.biography = new_bio;
+
+        emit(create_user_updated_event(object::id(user), utf8(b"biography"), new_bio));
     }
 
-    public entry fun transfer_user(user: UserProfile, to: address) {
+    public entry fun update_user_interests(user: &mut UserProfile, new_interests: vector<String>) {
+        user.interests = new_interests;
+
+        emit(create_user_updated_event(object::id(user), utf8(b"interests"), new_interests));
+    }
+
+    public entry fun update_user_location(user: &mut UserProfile, new_location: String) {
+        user.biography = new_location;
+
+        emit(create_user_updated_event(object::id(user), utf8(b"location"), new_location));
+    }
+
+    public entry fun update_user_memo(user: &mut UserProfile, new_memo: String) {
+        user.memo = new_memo;
+        emit(create_user_updated_event(object::id(user), utf8(b"memo"), new_memo));
+    }
+
+    public entry fun transfer_user(user: UserProfile, to: address, ctx: &mut TxContext) {
+        assert!(user.sui_wallet == tx_context::sender(ctx), ENOT_PERMISSION);
+
         user.sui_wallet = to;
+
+        emit(UserTransferredEvent {
+            user_id: object::id(&user),
+            from: user.sui_wallet,
+            to
+        });
+
         transfer::transfer(user, to);
     }
 
@@ -170,8 +260,28 @@ module iknows::user {
         user.name
     }
 
+    public fun email(user: &UserProfile): String {
+        user.email
+    }
+
     public fun birthday(user: &UserProfile): String {
         user.birthday
+    }
+
+    public fun location(user: &UserProfile): String {
+        user.location
+    }
+
+    public fun memo(user: &UserProfile): String {
+        user.memo
+    }
+
+    public fun interests(user: &UserProfile): vector<String> {
+        user.interests
+    }
+
+    public fun gender(user: &UserProfile): String {
+        user.gender
     }
 
     public fun sui_wallet(user: &UserProfile): address {
@@ -181,7 +291,6 @@ module iknows::user {
     public fun avatar(user: &UserProfile): vector<u8> {
         user.avatar
     }
-
 
     public fun biography(user: &UserProfile): String {
         user.biography
@@ -207,6 +316,14 @@ module iknows::user {
 
     public fun empty_string(): String {
         string::utf8(b"")
+    }
+
+    public fun create_user_updated_event<FieldType>(user_id: ID, field_name: String, field_value: FieldType): UserUpdatedEvent<FieldType> {
+        UserUpdatedEvent {
+            user_id,
+            field_name,
+            field_value
+        }
     }
 
     #[test_only] 
