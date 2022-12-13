@@ -176,9 +176,7 @@ module iknows::user {
             user_addr: sender,
         };
 
-        
-
-        assert!(ob::contains(&registry.bag, sender), EALREADY_EXISTS);
+        assert!(!ob::contains(&registry.bag, sender), EALREADY_EXISTS);
         ob::add(&mut registry.bag, sender, ui);
 
         transfer::transfer(u, sender);
