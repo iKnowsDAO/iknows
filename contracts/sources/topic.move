@@ -10,7 +10,10 @@ module iknows::topic {
     // use sui::sui::SUI;
     use sui::transfer;
     use sui::event::emit;
-    use sui::object_table::{Self as ot, ObjectTable};
+    use sui::table::{Self, Table};
+
+    use iknows::base::{Self, RichText};
+    use iknows::comment::{Self};
 
     // Resources
     struct Topic has key, store {
@@ -25,21 +28,27 @@ module iknows::topic {
         created_at: u64,
     }
 
-    struct RichText has store, copy, drop {
-        detail: String,
-        format: String,
-    }
-
     struct TopicEvent has store, copy, drop {
         event_time: u64,
         description: String,
         created_at: u64,
     }
 
+    // topic store for Individual
     struct TopicStore has key, store {
         id: UID,
         title: String,
-        topics: ObjectTable<ID, Topic>,
+        topics: Table<ID, Topic>,
+    }
+
+    // open store for topic, everyone can access
+    struct OpenTopicStore has key, store {
+        id: UID,
+        title: String,
+        topics: Table<u64, ID>,     // idx, topic_id
+        comments: Table<u64, ID>,   // idx, comment_id
+        // replies: ObjectTable<ID, 
+        seqenece: u64,
     }
 
     struct TopicBrief has key, store {
@@ -88,7 +97,7 @@ module iknows::topic {
         let author = tx_context::sender(ctx);
         let created_at = tx_context::epoch(ctx);
 
-        let content = RichText { detail, format };
+        let content = base::new_rich_text(detail, format);
 
         let topic = Topic {
             id: object::new(ctx),
@@ -105,7 +114,7 @@ module iknows::topic {
         emit(TopicCreatedEvent {
             topic_id: object::id(&topic),
             title,
-            content: RichText { detail, format },
+            content: base::new_rich_text(detail, format),
             category,
             photos,
             // events: vector::empty<TopicEvent>(),
@@ -123,7 +132,7 @@ module iknows::topic {
         let tb = TopicStore {
             id: object::new(ctx),
             title,
-            topics: ot::new<ID, Topic>(ctx),
+            topics: table::new<ID, Topic>(ctx),
         };
 
         transfer::transfer(tb, author);
@@ -156,8 +165,16 @@ module iknows::topic {
     ) {
         let topic = new_topic(title, detail, format, category, photos, author_name, ctx);
 
-        ot::add(&mut stores.topics, object::id(&topic), topic);
+        table::add(&mut stores.topics, object::id(&topic), topic);
     } 
+
+    public entry fun list_topic_in_openstore(
+        stores: &mut OpenTopicStore,
+        topic: &Topic,
+    ) {
+        stores.seqenece = stores.seqenece + 1;
+        table::add(&mut stores.topics, stores.seqenece, object::id(topic));
+    }
 
     public entry fun update_topic(
         topic: &mut Topic,
@@ -168,7 +185,7 @@ module iknows::topic {
         photos: vector<vector<u8>>,
         author_name: String,
     ) {
-        let content = RichText { detail, format };
+        let content = base::new_rich_text(detail, format);
         topic.title = title;
         topic.content = content;
         topic.category = category;
@@ -197,10 +214,21 @@ module iknows::topic {
         stores: &mut TopicStore,
         topic_id: ID,
     ) {
-        assert!(ot::contains(&stores.topics, topic_id), ENOT_FOUND);
+        assert!(table::contains(&stores.topics, topic_id), ENOT_FOUND);
 
-        let topic = ot::remove(&mut stores.topics, topic_id);
+        let topic = table::remove(&mut stores.topics, topic_id);
         delete_topic(topic);   
+    }
+
+    public entry fun add_topic_comment(open_stores: &mut OpenTopicStore, topic_idx: u64, detail: String, format: String, ctx: &mut TxContext) {
+
+        assert!(table::contains(&open_stores.topics, topic_idx), ENOT_FOUND);
+
+        let content = base::new_rich_text(detail, format);
+        let topic_id = table::borrow(&open_stores.topics, topic_idx);
+        let comment = comment::new_comment(*topic_id, content, ctx);
+
+        transfer::transfer(comment, tx_context::sender(ctx));
     }
 
     // Getters
