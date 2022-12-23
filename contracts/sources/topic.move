@@ -11,6 +11,7 @@ module iknows::topic {
     use sui::transfer;
     use sui::event::emit;
     use sui::table::{Self, Table};
+    // use sui::object_table::{Self as ot, ObjectTable};
 
     use iknows::base::{Self, RichText};
     use iknows::comment::{Self};
@@ -38,8 +39,8 @@ module iknows::topic {
     struct TopicStore has key, store {
         id: UID,
         title: String,
-        topics: Table<ID, Topic>,
-        topics_listed: Table<ID, u64>,
+        topics: Table<ID, Topic>,   // (idx, Topic)
+        topics_listed: Table<ID, u64>,  // (topic id, idx in open topic store)
     }
 
     // open store for topic, everyone can access
@@ -48,7 +49,7 @@ module iknows::topic {
         topics: Table<u64, ID>,     // idx, topic_id
         comments: Table<u64, ID>,   // idx, comment_id
         // replies: ObjectTable<ID, 
-        seqenece: u64,
+        sequence: u64,
     }
 
     struct TopicBrief has key, store {
@@ -95,7 +96,7 @@ module iknows::topic {
                 id: object::new(ctx),
                 topics: table::new(ctx),
                 comments: table::new(ctx),
-                seqenece: 0,
+                sequence: 0,
             }
         )
     }
@@ -142,7 +143,7 @@ module iknows::topic {
         topic
     }
 
-    public entry fun create_topic_table(title: String, ctx: &mut TxContext) {
+    public entry fun create_topic_store(title: String, ctx: &mut TxContext) {
         let author = tx_context::sender(ctx);
 
         let tb = TopicStore {
@@ -156,6 +157,7 @@ module iknows::topic {
     }
 
     public entry fun create_topic(
+        my_store: &mut TopicStore,
         title: String,
         detail: String,
         format: String,
@@ -164,37 +166,65 @@ module iknows::topic {
         author_name: String,
         ctx: &mut TxContext,
     ) {
-        let author = tx_context::sender(ctx);
+        // let author = tx_context::sender(ctx);
         let topic = new_topic(title, detail, format, category, photos, author_name, ctx);
 
-        let stores = TopicStore {
-            id: object::new(ctx),
-            title,
-            topics: table::new<ID, Topic>(ctx),
-            topics_listed: table::new<ID, u64>(ctx),
-        };
+        // let stores = TopicStore {
+        //     id: object::new(ctx),
+        //     title,
+        //     topics: table::new<ID, Topic>(ctx),
+        //     topics_listed: table::new<ID, u64>(ctx),
+        // };
 
-        table::add(&mut stores.topics, object::id(&topic), topic);
+        table::add(&mut my_store.topics, object::id(&topic), topic);
 
-        transfer::transfer(stores, author);
+        // transfer::transfer(stores, author);
     } 
 
-    // 
+    // list topic in open store
     public entry fun list_topic(
-        stores: &mut OpenTopicStore,
+        open_store: &mut OpenTopicStore,
+        my_store: &mut TopicStore,
         topic: &Topic,
     ) {
-        stores.seqenece = stores.seqenece + 1;
-        table::add(&mut stores.topics, stores.seqenece, object::id(topic));
+        let inner_id = object::id(topic);
+        open_store.sequence = open_store.sequence + 1;
+        table::add(&mut open_store.topics, open_store.sequence, inner_id);
+        table::add(&mut my_store.topics_listed, inner_id, open_store.sequence);
     }
 
-    public entry fun unlist_topic(
-        stores: &mut OpenTopicStore,
-        my_stores: &TopicStore,
-        topic: &Topic,
+    public entry fun create_topic_and_list(
+        open_store: &mut OpenTopicStore,
+        my_store: &mut TopicStore,
+        title: String,
+        detail: String,
+        format: String,
+        category: String,
+        photos: vector<vector<u8>>,
+        author_name: String,
+        ctx: &mut TxContext,
     ) {
-        let idx = table::borrow(&my_stores.topics_listed, object::id(topic));
-        table::remove(&mut stores.topics, *idx);
+        // let author = tx_context::sender(ctx);
+        let topic = new_topic(title, detail, format, category, photos, author_name, ctx);
+
+        let topic_inner_id = object::id(&topic);
+
+        list_topic(open_store, my_store, &topic);
+
+        table::add(&mut my_store.topics, topic_inner_id, topic);  
+        
+    }
+    
+    public entry fun unlist_topic(
+        open_store: &mut OpenTopicStore,
+        my_store: &mut TopicStore,
+        topic_inner_id: ID,
+    ) {
+
+        if (table::contains(&my_store.topics_listed, topic_inner_id)) {
+            let idx = table::remove(&mut my_store.topics_listed, topic_inner_id);
+            table::remove(&mut open_store.topics, idx);   
+        }       
     }
 
     public entry fun update_topic(
@@ -224,7 +254,7 @@ module iknows::topic {
         })
     }
 
-    public entry fun delete_topic(
+    public fun delete_topic(
         topic: Topic
     ) {
         let Topic { id, title: _, content: _, category: _, photos: _, events: _, author: _, author_name: _, created_at: _ } = topic;
@@ -232,21 +262,23 @@ module iknows::topic {
     }
 
     public entry fun delete_topic_in_store(
-        stores: &mut TopicStore,
-        topic_id: ID,
+        open_store: &mut OpenTopicStore,
+        my_store: &mut TopicStore,
+        topic_inner_id: ID,
     ) {
-        assert!(table::contains(&stores.topics, topic_id), ENOT_FOUND);
+        assert!(table::contains(&my_store.topics, topic_inner_id), ENOT_FOUND);
 
-        let topic = table::remove(&mut stores.topics, topic_id);
+        unlist_topic(open_store, my_store, topic_inner_id);
+        let topic = table::remove(&mut my_store.topics, topic_inner_id);
         delete_topic(topic);   
     }
 
-    public entry fun add_topic_comment(open_stores: &mut OpenTopicStore, topic_idx: u64, detail: String, format: String, ctx: &mut TxContext) {
+    public entry fun add_topic_comment(open_store: &mut OpenTopicStore, topic_idx: u64, detail: String, format: String, ctx: &mut TxContext) {
 
-        assert!(table::contains(&open_stores.topics, topic_idx), ENOT_FOUND);
+        assert!(table::contains(&open_store.topics, topic_idx), ENOT_FOUND);
 
         let content = base::new_rich_text(detail, format);
-        let topic_id = table::borrow(&open_stores.topics, topic_idx);
+        let topic_id = table::borrow(&open_store.topics, topic_idx);
         let comment = comment::new_comment(*topic_id, content, ctx);
 
         transfer::transfer(comment, tx_context::sender(ctx));
@@ -283,5 +315,35 @@ module iknows::topic {
 
     public fun created_at(t: &Topic): u64 {
         t.created_at
+    }
+
+    // get the open topic store sequnece 
+    public fun get_open_store_sequence(stores: &OpenTopicStore): u64 {
+        stores.sequence
+    }
+
+    public fun get_latest_topic_id_from_open_store(store: &OpenTopicStore, idx: u64): &ID {
+        table::borrow(&store.topics, idx)
+    }
+
+    public fun get_topic_from_topic_store(store: &TopicStore, inner_id: ID): &Topic {
+        table::borrow(&store.topics, inner_id)
+    }
+
+    public fun is_empty_open_store(store: &OpenTopicStore): bool {
+        table::is_empty(&store.topics)
+    }
+
+    public fun is_empty_topic_store(store: &TopicStore): bool {
+        table::is_empty(&store.topics)
+    }
+
+    public fun listed_contains(store: &TopicStore, inner_id: ID): bool {
+        table::contains(&store.topics, inner_id)
+    }
+
+    #[test_only]
+    public fun init_test(ctx: &mut TxContext) {
+        init_module(ctx);
     }
 }
