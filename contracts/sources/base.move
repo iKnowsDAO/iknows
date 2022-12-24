@@ -11,4 +11,12 @@ module iknows::base {
     public fun new_rich_text(detail: String, format: String): RichText {
         RichText { detail, format }
     }
+
+    public fun get_detail(text: &RichText): String {
+        text.detail
+    }
+
+    public fun get_format(text: &RichText): String {
+        text.format
+    }
 }

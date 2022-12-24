@@ -1,14 +1,17 @@
 
 module iknows::topic_tests {
 
-    // #[test_only]
-    // use sui::table;
+    #[test_only]
+    use sui::object::{Self, ID};
 
     #[test_only]
     use std::string::{utf8};
 
     #[test_only]
     use std::vector;
+
+    #[test_only]
+    use std::option::{Self, Option};
 
     // #[test_only]
     // use sui::tx_context::{Self, TxContext};
@@ -18,7 +21,7 @@ module iknows::topic_tests {
 
     #[test_only]
     use iknows::topic_board::{Self as board, Board, init_test};
-    use iknows::topic::{Topic};
+    use iknows::topic::{Self, Topic};
 
     #[test]
     fun create_store_and_topic_and_list_should_work() {
@@ -35,6 +38,8 @@ module iknows::topic_tests {
         let photos = vector::empty();
         let author = utf8(b"author");
 
+        let topic_opt: Option<ID> = option::none();
+
         // init module, open stores
         let ctx = test_scenario::ctx(scenario);
         init_test(ctx);
@@ -45,7 +50,11 @@ module iknows::topic_tests {
             let board = test_scenario::take_shared<Board<Topic>>(scenario);
             
             let ctx = test_scenario::ctx(scenario);
-            board::create_topic_and_list(&mut board, title, detail, format, category, photos, author, 0, ctx);
+            let topic1 = topic::new_topic(title, detail, format, category, photos, author, ctx);
+
+            option::fill(&mut topic_opt, object::id(&topic1));
+
+            board::list_topic(&mut board, topic1, 0, ctx);
 
             test_scenario::return_shared<Board<Topic>>(board);
         };
@@ -55,7 +64,7 @@ module iknows::topic_tests {
         {
             let board = test_scenario::take_shared<Board<Topic>>(scenario);
             assert!(board::get_total(&board) == 1, 0);
-            assert!(board::get_sequence(&board) == 1, 0);
+            assert!(board::get_sequence(&board) == 10001, 0);
             test_scenario::return_shared<Board<Topic>>(board);
         };
 
@@ -63,14 +72,25 @@ module iknows::topic_tests {
         test_scenario::next_tx(scenario, user_addr);
         {
             let board = test_scenario::take_shared<Board<Topic>>(scenario);
+            let ctx = test_scenario::ctx(scenario);
             // TODO How to get topic id
+            let topic_id = option::extract(&mut topic_opt);
+            board::unlist_and_take_topic(&mut board, topic_id, ctx);
+
             test_scenario::return_shared<Board<Topic>>(board);
         };
 
         // check open store and topic is empty
         test_scenario::next_tx(scenario, user_addr);
         {
-            
+            let board = test_scenario::take_shared<Board<Topic>>(scenario);
+            let topic1 = test_scenario::take_from_sender<Topic>(scenario);
+
+            assert!(board::get_total(&board) == 0, 0);
+            assert!(topic::title(&topic1) == title, 0);
+
+            test_scenario::return_to_sender(scenario, topic1);
+            test_scenario::return_shared<Board<Topic>>(board);
         };
 
         test_scenario::end(scenario_val);

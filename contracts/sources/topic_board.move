@@ -10,9 +10,12 @@ module iknows::topic_board {
     use sui::transfer;
     use sui::event::emit;
 
-    use iknows::topic::{Self, Topic, TopicManagerCap};
-
     use sui::dynamic_object_field as dof;
+
+    use iknows::base;
+    use iknows::topic::{Self, Topic, TopicManagerCap};
+    use iknows::comment::{Self, Comment};
+    use iknows::reply::{Self, Reply}; 
 
     /// A generate Board for open topic
     struct Board<phantom T: key> has key {
@@ -40,7 +43,7 @@ module iknows::topic_board {
 
     // Emitted when someone lists a topic on the Board<T>
     struct ListedEvent<phantom T> has copy, drop {
-        topic_id: ID,
+        item_id: ID,
         owner: address,
         price: u64,
         created_at: u64,
@@ -48,11 +51,12 @@ module iknows::topic_board {
 
     // Emitted when someone unlists a topic from the Board<T>
     struct UnlistedEvent<phantom T> has copy, drop {
-        topic_id: ID,
+        item_id: ID,
     }
 
     // Errors
     const ENotOwner: u64 = 0;
+    const ENotListed: u64 = 1;
 
     // ================ Publishing =============== //
     fun init(ctx: &mut TxContext) {
@@ -99,23 +103,11 @@ module iknows::topic_board {
         price: u64,
         ctx: &mut TxContext
     ) {
-        let id = object::new(ctx);
-        let topic_id = object::id(&topic);
-        let owner = tx_context::sender(ctx);
-        let created_at = tx_context::epoch(ctx);
-
-        emit(ListedEvent<Topic> {
-            topic_id,
-            price,
-            owner,
-            created_at,
-        });
-
+        
+        list<Topic>(board, topic, price, ctx);
+        
         increment_total(board);
         increment_sequence(board);
-
-        dof::add(&mut id, true, topic);
-        dof::add(&mut board.id, topic_id, Listing<Topic> { id, price, owner, created_at });
     }
 
     public fun unlist_topic(
@@ -123,13 +115,25 @@ module iknows::topic_board {
         topic_id: ID,
         ctx: &mut TxContext,
     ): Topic {
-        let Listing<Topic> { id, price: _, owner, created_at: _} = dof::remove<ID, Listing<Topic>>(&mut board.id, topic_id);
+        let topic = unlist<Topic>(board, topic_id, ctx);
+
+        decrement_total(board);
+
+        topic
+    }   
+
+    public fun unlist<T: key + store>(
+        board: &mut Board<Topic>,
+        item_id: ID,
+        ctx: &mut TxContext,
+    ): T {
+        let Listing<T> { id, price: _, owner, created_at: _} = dof::remove<ID, Listing<T>>(&mut board.id, item_id);
         let topic = dof::remove(&mut id, true);
 
         assert!(tx_context::sender(ctx) == owner, ENotOwner);
 
         emit(UnlistedEvent<Topic> {
-            topic_id: object::id(&topic),
+            item_id: object::id(&topic),
         });
 
         object::delete(id);
@@ -137,7 +141,7 @@ module iknows::topic_board {
         topic
     }   
 
-    public entry fun unlist_and_take(
+    public entry fun unlist_and_take_topic(
         board: &mut Board<Topic>,
         topic_id: ID,
         ctx: &mut TxContext
@@ -147,16 +151,85 @@ module iknows::topic_board {
         transfer::transfer(topic, tx_context::sender(ctx));
     }
 
-    // public entry fun add_topic_comment(open_store: &mut OpenTopicStore, topic_idx: u64, detail: String, format: String, ctx: &mut TxContext) {
+    public entry fun unlist_and_take<T: key + store>(
+        board: &mut Board<Topic>,
+        topic_id: ID,
+        ctx: &mut TxContext
+    ) {
+        let topic = unlist<T>(board, topic_id, ctx);
 
-    //     assert!(table::contains(&open_store.topics, topic_idx), ENOT_FOUND);
+        transfer::transfer(topic, tx_context::sender(ctx));
+    }
 
-    //     let content = base::new_rich_text(detail, format);
-    //     let topic_id = table::borrow(&open_store.topics, topic_idx);
-    //     let comment = comment::new_comment(*topic_id, content, ctx);
+    public entry fun add_topic_comment(
+        board: &mut Board<Topic>, 
+        topic_id: ID, 
+        detail: String, 
+        format: String, 
+        price: u64, 
+        ctx: &mut TxContext
+    ) {
 
-    //     transfer::transfer(comment, tx_context::sender(ctx));
-    // }
+        // assert!(dof::exists_with_type<ID, Listing<Topic>>(&board.id, topic_id), ENotListed);
+
+        let content = base::new_rich_text(detail, format);
+        let comment = comment::new_comment(topic_id, content, ctx);
+        let comment_id = object::id(&comment);
+
+        let id = object::new(ctx);
+        let owner = tx_context::sender(ctx);
+        let created_at = tx_context::epoch(ctx);
+
+        dof::add(&mut id, true, comment);
+        dof::add(&mut board.id, comment_id, Listing<Comment> { id, price, owner, created_at });
+    }
+
+    public entry fun list<T: key + store>(
+        board: &mut Board<Topic>,
+        item: T,
+        price: u64,
+        ctx: &mut TxContext
+    ) {
+        let id = object::new(ctx);
+        let item_id = object::id(&item);
+        let owner = tx_context::sender(ctx);
+        let created_at = tx_context::epoch(ctx);
+
+        emit(ListedEvent<T> {
+            item_id,
+            price,
+            owner,
+            created_at,
+        });
+
+        dof::add(&mut id, true, item);
+        dof::add(&mut board.id, item_id, Listing<T> { id, price, owner, created_at });
+    }
+
+    public entry fun add_comment_reply(
+        board: &mut Board<Topic>, 
+        topic_id: ID, 
+        comment_id: ID,
+        detail: String, 
+        format: String, 
+        price: u64, 
+        ctx: &mut TxContext
+    ) {
+
+        // assert!(dof::exists_with_type<ID, Listing<Topic>>(&board.id, topic_id), ENotListed);
+
+        let content = base::new_rich_text(detail, format);
+        let reply = reply::new_reply(topic_id, comment_id, content, ctx);
+        let reply_id = object::id(&reply);
+
+        let id = object::new(ctx);
+        let owner = tx_context::sender(ctx);
+        let created_at = tx_context::epoch(ctx);
+
+        dof::add(&mut id, true, reply);
+        dof::add(&mut board.id, reply_id, Listing<Reply> { id, price, owner, created_at });
+    }
+
 
     // get the open topic store sequnece 
     public fun get_sequence<T: key>(board: &Board<T>): u64 {
@@ -179,21 +252,6 @@ module iknows::topic_board {
         board.sequence = board.sequence + 1;
     }
 
-    // public fun get_topic_from_topic_store(store: &TopicStore, inner_id: ID): &Topic {
-    //     table::borrow(&store.topics, inner_id)
-    // }
-
-    // public fun is_empty_open_store(store: &OpenTopicStore): bool {
-    //     table::is_empty(&store.topics)
-    // }
-
-    // public fun is_empty_topic_store(store: &TopicStore): bool {
-    //     table::is_empty(&store.topics)
-    // }
-
-    // public fun listed_contains(store: &TopicStore, inner_id: ID): bool {
-    //     table::contains(&store.topics, inner_id)
-    // }
 
     #[test_only]
     public fun init_test(ctx: &mut TxContext) {
