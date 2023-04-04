@@ -148,7 +148,7 @@ module iknows::topic_board {
     ) {
         let topic = unlist_topic(board, topic_id, ctx);
 
-        transfer::transfer(topic, tx_context::sender(ctx));
+        transfer::public_transfer(topic, tx_context::sender(ctx));
     }
 
     public entry fun unlist_and_take<T: key + store>(
@@ -158,7 +158,7 @@ module iknows::topic_board {
     ) {
         let topic = unlist<T>(board, topic_id, ctx);
 
-        transfer::transfer(topic, tx_context::sender(ctx));
+        transfer::public_transfer(topic, tx_context::sender(ctx));
     }
 
     public entry fun add_topic_comment(
