@@ -42,3 +42,6 @@ tsconfig.tsbuildinfo
 # logs
 wallet.log.*
 sui.log.*
+
+# Move
+Move.lock
